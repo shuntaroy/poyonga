@@ -1,3 +1,4 @@
+import json
 import sys
 import struct
 import unittest
@@ -6,6 +7,8 @@ try:
 except ImportError:
     from unittest.mock import patch, Mock
 from poyonga import Groonga, GroongaResult
+from poyonga.client import get_send_data_for_gqtp, convert_gqtp_result_data, GQTP_HEADER_SIZE
+from poyonga.const import GRN_STATUS_UNSUPPORTED_COMMAND_VERSION
 
 
 class PoyongaHTTPTestCase(unittest.TestCase):
@@ -45,6 +48,50 @@ class PoyongaGQTPTestCase(unittest.TestCase):
         self.assertEqual(type(ret), GroongaResult)
         self.assertEqual(ret.status, 0)
 
+
+class PoyongaFunctions(unittest.TestCase):
+
+    def test_get_send_data(self):
+        d = get_send_data_for_gqtp("status")
+        self.assertEqual(30, len(d))
+        if sys.version_info[0] == 3:
+            self.assertEqual(ord('\xc7'), d[0])
+        else:
+            self.assertEqual('\xc7', d[0])
+        (size, ) = struct.unpack("!I", d[8:12])
+        self.assertEqual(6, size)
+
+    def test_get_send_data_with_args(self):
+        kwargs = {"table": "Site"}
+        d = get_send_data_for_gqtp("select", **kwargs)
+        self.assertEqual(45, len(d))
+        if sys.version_info[0] == 3:
+            self.assertEqual(ord('\xc7'), d[0])
+        else:
+            self.assertEqual('\xc7', d[0])
+        body = d[GQTP_HEADER_SIZE:]
+        (size, ) = struct.unpack("!I", d[8:12])
+        self.assertEqual(len(body), size)
+
+    def test_convert_gqtp_result(self):
+        grn = Groonga()
+        s = grn._clock_gettime()
+        e = grn._clock_gettime()
+        senddata = get_send_data_for_gqtp("status")
+        rawdata = senddata[:GQTP_HEADER_SIZE] + b"{\"test\": 0}"
+        d = convert_gqtp_result_data(s, e, 0, rawdata)
+        d = json.loads(d)
+        self.assertEqual(d[0][0], 0)
+
+    def test_convert_gqtp_result_fail(self):
+        grn = Groonga()
+        s = grn._clock_gettime()
+        e = grn._clock_gettime()
+        senddata = get_send_data_for_gqtp("status")
+        rawdata = senddata[:GQTP_HEADER_SIZE] + b"{\"test\": 0}"
+        d = convert_gqtp_result_data(s, e, GRN_STATUS_UNSUPPORTED_COMMAND_VERSION, rawdata)
+        d = json.loads(d)
+        self.assertEqual(d[0][0], -71)
 
 if __name__ == '__main__':
     unittest.main()
